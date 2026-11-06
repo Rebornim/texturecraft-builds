@@ -11,5 +11,6 @@ gh workflow run run.yml -R Rebornim/texturecraft-builds -f ref=<branch> -f job=s
 - `exe`: Windows release build of the desktop app, uploaded as the artifact `texturecraft-exe`.
 - `test`: `cargo test <args>` on Ubuntu; the log is uploaded as `test-log`.
 - `snapshots`: like `test`, with a software Vulkan driver and `TC_UI_SNAPSHOTS=out`; the pictures are uploaded as `snapshots`.
+- `run`: any bash command on Ubuntu (full history checked out, e.g. old-vs-new timings with `git worktree add`); `out/` is uploaded as `run-out`.
 
 The full quality gate stays in the fork's own CI (`ci.yml`, `cargo xtask ci`).

@@ -8,12 +8,16 @@ on:
         description: "Branch, tag or commit of the repository to build"
         required: true
       job:
-        description: "exe (Windows release build), test (cargo test on Ubuntu), snapshots (test with a software GPU, pictures uploaded)"
+        description: "exe (Windows release build), test (cargo test on Ubuntu), snapshots (test with a software GPU, pictures uploaded), run (any bash command on Ubuntu, e.g. old-vs-new timings; full history checked out)"
         type: choice
-        options: [exe, test, snapshots]
+        options: [exe, test, snapshots, run]
         default: test
       args:
         description: "Arguments after `cargo test` (test and snapshots jobs), e.g. -p texturecraft-engine --test session"
+        required: false
+        default: ""
+      command:
+        description: "run job: bash command from the repository root; write results to out/ (uploaded). Full history is checked out, so `git worktree add base <ref>` works for old-vs-new comparisons"
         required: false
         default: ""
       label:
@@ -105,5 +109,40 @@ jobs:
         if: always()
         with:
           name: ${{ inputs.job == 'snapshots' && 'snapshots' || 'test-log' }}
+          path: out/
+          retention-days: 14
+
+  run:
+    if: inputs.job == 'run'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install packages
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev libgtk-3-dev mesa-vulkan-drivers
+      - name: Install Rust
+        run: rustup toolchain install "$TOOLCHAIN" --profile minimal && rustup default "$TOOLCHAIN"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: run-linux
+      - name: Command
+        env:
+          COMMAND: ${{ inputs.command }}
+        run: |
+          mkdir -p out
+          echo "machine: $(nproc) cores, $(free -g | awk '/Mem/{print $2}') GB" | tee out/machine.txt
+          set -o pipefail
+          bash -c "$COMMAND" 2>&1 | tee out/run.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: run-out
           path: out/
           retention-days: 14

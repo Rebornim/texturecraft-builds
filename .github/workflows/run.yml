@@ -1,0 +1,109 @@
+name: run
+run-name: "${{ inputs.job }} · ${{ inputs.ref }} ${{ inputs.label }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag or commit of the repository to build"
+        required: true
+      job:
+        description: "exe (Windows release build), test (cargo test on Ubuntu), snapshots (test with a software GPU, pictures uploaded)"
+        type: choice
+        options: [exe, test, snapshots]
+        default: test
+      args:
+        description: "Arguments after `cargo test` (test and snapshots jobs), e.g. -p texturecraft-engine --test session"
+        required: false
+        default: ""
+      label:
+        description: "Free text shown in the run name, e.g. the session or PR"
+        required: false
+        default: ""
+      repository:
+        description: "Repository to check out"
+        required: false
+        default: "Rebornim/texturecraft"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  RUST_BACKTRACE: 1
+  TOOLCHAIN: "1.96.0"
+  # The craft-fonts commit upstream's ci.yml and release.yml build with
+  CRAFT_FONTS_REF: aced4137c022f1f587624d48e81ec77e1914a9cc
+
+jobs:
+  exe:
+    if: inputs.job == 'exe'
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: storytold/craft-fonts
+          ref: ${{ env.CRAFT_FONTS_REF }}
+          path: craft-fonts
+          persist-credentials: false
+      - name: Install Rust
+        shell: bash
+        run: rustup toolchain install "$TOOLCHAIN" --profile minimal && rustup default "$TOOLCHAIN"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: exe-windows
+      - name: Build
+        shell: bash
+        env:
+          CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
+        run: cargo build --release -p texturecraft
+      - uses: actions/upload-artifact@v4
+        with:
+          name: texturecraft-exe
+          path: target/release/texturecraft.exe
+          retention-days: 14
+
+  test:
+    if: inputs.job == 'test' || inputs.job == 'snapshots'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - name: Install packages
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev libgtk-3-dev \
+            ${{ inputs.job == 'snapshots' && 'mesa-vulkan-drivers' || '' }}
+      - name: Install Rust
+        run: rustup toolchain install "$TOOLCHAIN" --profile minimal && rustup default "$TOOLCHAIN"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test-linux
+      - name: cargo test
+        env:
+          ARGS: ${{ inputs.args }}
+          SNAPSHOTS: ${{ inputs.job == 'snapshots' }}
+        run: |
+          mkdir -p out
+          if [ "$SNAPSHOTS" = "true" ]; then export TC_UI_SNAPSHOTS="$PWD/out"; fi
+          set -o pipefail
+          # ARGS is split like a shell command line on purpose (e.g. `-p crate --test file -- --ignored`)
+          eval "cargo test $ARGS" 2>&1 | tee out/test.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ inputs.job == 'snapshots' && 'snapshots' || 'test-log' }}
+          path: out/
+          retention-days: 14
